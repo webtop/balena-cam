@@ -14,6 +14,7 @@ class CameraDevice():
             sys.exit()
         self.cap.set(3, 640)
         self.cap.set(4, 480)
+        self.cap.set(5, 30)
 
     def rotate(self, frame):
         if flip:

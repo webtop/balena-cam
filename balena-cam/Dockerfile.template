@@ -1,4 +1,4 @@
-FROM balenalib/%%BALENA_MACHINE_NAME%%-debian:stretch-20190612
+FROM balenalib/fincm3-debian:stretch-20190612
 
 # Install dependencies
 RUN apt-get update && \

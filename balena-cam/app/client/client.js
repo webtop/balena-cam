@@ -320,9 +320,11 @@ if (window.navigator.userAgent.indexOf("Edge") > -1 || safariOnIos) {
     var config = null;
     fetch("/ice-config")
         .then(function(response) {
+            console.log("JSON:" + response.json);
             return response.json();
         })
         .then(function(configData) {
+            console.log("Config: " + configData);
             config = configData;
             primaryPeerConnection = createNewPeerConnection();
         })
