@@ -315,16 +315,14 @@ var safariOnIos = isSafari && iOS;
 if (window.navigator.userAgent.indexOf("Edge") > -1 || safariOnIos) {
     //state 3 means the client is a Microsoft Edge or Safari on iOS
     state = 3;
-    startMJPEG();
+    //startMJPEG();
 } else {
     var config = null;
     fetch("/ice-config")
         .then(function(response) {
-            console.log("JSON:" + response.json);
             return response.json();
         })
         .then(function(configData) {
-            console.log("Config: " + configData);
             config = configData;
             primaryPeerConnection = createNewPeerConnection();
         })
@@ -332,6 +330,6 @@ if (window.navigator.userAgent.indexOf("Edge") > -1 || safariOnIos) {
             console.error("Error while getting the ICE server configuration");
             console.error(e);
             state = 3;
-            startMJPEG();
+            //startMJPEG();
         });
 }

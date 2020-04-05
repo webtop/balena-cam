@@ -1,39 +1,19 @@
-import asyncio, json, os, cv2, platform, sys
-from time import sleep
+import asyncio, json, os, platform, sys, av, time
 from aiohttp import web
-from av import VideoFrame
-from aiortc import RTCPeerConnection, RTCSessionDescription, VideoStreamTrack, RTCIceServer, RTCConfiguration
+from aiortc import RTCPeerConnection, RTCSessionDescription, RTCIceServer, RTCConfiguration, VideoStreamTrack, AudioStreamTrack
+from aiortc.contrib.media import MediaPlayer
 from aiohttp_basicauth import BasicAuthMiddleware
 
 class CameraDevice():
     def __init__(self):
-        self.cap = cv2.VideoCapture(0)
-        ret, frame = self.cap.read()
-        if not ret:
-            print('Failed to open default camera. Exiting...')
+        self.player = MediaPlayer('/dev/video1', format='v4l2', options={'video_size': '640x480'})
+        
+        if self.player.video is None:
+            print("Failed to open video stream. Exiting...")
             sys.exit()
-        self.cap.set(3, 640)
-        self.cap.set(4, 480)
-        self.cap.set(5, 30)
 
-    def rotate(self, frame):
-        if flip:
-            (h, w) = frame.shape[:2]
-            center = (w/2, h/2)
-            M = cv2.getRotationMatrix2D(center, 180, 1.0)
-            frame = cv2.warpAffine(frame, M, (w, h))
-        return frame
-
-    async def get_latest_frame(self):
-        ret, frame = self.cap.read()
-        await asyncio.sleep(0)
-        return self.rotate(frame)
-
-    async def get_jpeg_frame(self):
-        encode_param = (int(cv2.IMWRITE_JPEG_QUALITY), 90)
-        frame = await self.get_latest_frame()
-        frame, encimg = cv2.imencode('.jpg', frame, encode_param)
-        return encimg.tostring()
+        if self.player.audio is None:
+            print("Stream contains no audio.")
 
 class PeerConnectionFactory():
     def __init__(self):
@@ -71,20 +51,58 @@ class PeerConnectionFactory():
     def get_ice_config(self):
         return json.dumps(self.config)
 
-
 class RTCVideoStream(VideoStreamTrack):
     def __init__(self, camera_device):
         super().__init__()
-        self.camera_device = camera_device
-        self.data_bgr = None
+        self.kind = 'video'
+        self._player = camera_device.player
+        self._queue = asyncio.Queue()
+        self._start = None
 
     async def recv(self):
-        self.data_bgr = await self.camera_device.get_latest_frame()
-        frame = VideoFrame.from_ndarray(self.data_bgr, format='bgr24')
-        pts, time_base = await self.next_timestamp()
-        frame.pts = pts
-        frame.time_base = time_base
+        if self.readyState != "live":
+            raise MediaStreamError
+
+        self._player._start(self)
+        frame = await self._queue.get()
+        if frame is None:
+            self.stop()
+            raise MediaStreamError
         return frame
+
+    def stop(self):
+        super().stop()
+        if self._player is not None:
+            self._player._stop(self)
+            self._player = None
+
+class RTCAudioStream(AudioStreamTrack):
+    def __init__(self, camera_device):
+        super().__init__()
+        self.kind = 'audio'
+        self._player = camera_device.player
+        self._queue = asyncio.Queue()
+        self._start = None
+
+    async def recv(self):
+        if self.readyState != "live":
+            raise MediaStreamError
+
+        self._player._start(self)
+        frame = await self._queue.get()
+        if frame is None:
+            self.stop()
+            raise MediaStreamError
+        return frame
+
+    def stop(self):
+        super().stop()
+        if self._player is not None:
+            self._player._stop(self)
+            self._player = None
+
+class MediaStreamError(Exception):
+    pass
 
 async def index(request):
     content = open(os.path.join(ROOT, 'client/index.html'), 'r').read()
@@ -116,9 +134,13 @@ async def offer(request):
         type=params['type'])
     pc = pc_factory.create_peer_connection()
     pcs.add(pc)
+    
     # Add local media
     local_video = RTCVideoStream(camera_device)
+    local_audio = RTCAudioStream(camera_device)
     pc.addTrack(local_video)
+    pc.addTrack(local_audio)
+
     @pc.on('iceconnectionstatechange')
     async def on_iceconnectionstatechange():
         if pc.iceConnectionState == 'failed':
@@ -134,25 +156,25 @@ async def offer(request):
             'type': pc.localDescription.type
         }))
 
-async def mjpeg_handler(request):
-    boundary = "frame"
-    response = web.StreamResponse(status=200, reason='OK', headers={
-        'Content-Type': 'multipart/x-mixed-replace; '
-                        'boundary=%s' % boundary,
-    })
-    await response.prepare(request)
-    while True:
-        data = await camera_device.get_jpeg_frame()
-        await asyncio.sleep(0.2) # this means that the maximum FPS is 5
-        await response.write(
-            '--{}\r\n'.format(boundary).encode('utf-8'))
-        await response.write(b'Content-Type: image/jpeg\r\n')
-        await response.write('Content-Length: {}\r\n'.format(
-                len(data)).encode('utf-8'))
-        await response.write(b"\r\n")
-        await response.write(data)
-        await response.write(b"\r\n")
-    return response
+# async def mjpeg_handler(request):
+#     boundary = "frame"
+#     response = web.StreamResponse(status=200, reason='OK', headers={
+#         'Content-Type': 'multipart/x-mixed-replace; '
+#                         'boundary=%s' % boundary,
+#     })
+#     await response.prepare(request)
+#     while True:
+#         data = await camera_device.get_jpeg_frame()
+#         await asyncio.sleep(0.2) # this means that the maximum FPS is 5
+#         await response.write(
+#             '--{}\r\n'.format(boundary).encode('utf-8'))
+#         await response.write(b'Content-Type: image/jpeg\r\n')
+#         await response.write('Content-Length: {}\r\n'.format(
+#                 len(data)).encode('utf-8'))
+#         await response.write(b"\r\n")
+#         await response.write(data)
+#         await response.write(b"\r\n")
+#     return response
 
 async def config(request):
     return web.Response(
@@ -166,11 +188,11 @@ async def on_shutdown(app):
     await asyncio.gather(*coros)
 
 def checkDeviceReadiness():
-    if not os.path.exists('/dev/video0') and platform.system() == 'Linux':
+    if not os.path.exists('/dev/video1') and platform.system() == 'Linux':
         print('Video device is not ready')
         print('Trying to load bcm2835-v4l2 driver...')
         os.system('bash -c "modprobe bcm2835-v4l2"')
-        sleep(1)
+        time.sleep(1)
         sys.exit()
     else:
         print('Video device is ready')
@@ -216,6 +238,6 @@ if __name__ == '__main__':
     app.router.add_get('/client.js', javascript)
     app.router.add_get('/style.css', stylesheet)
     app.router.add_post('/offer', offer)
-    app.router.add_get('/mjpeg', mjpeg_handler)
+    #app.router.add_get('/mjpeg', mjpeg_handler)
     app.router.add_get('/ice-config', config)
     web.run_app(app, port=80)
