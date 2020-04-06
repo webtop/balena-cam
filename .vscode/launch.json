@@ -1,0 +1,18 @@
+{
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Attach (Remote Debug 100.0.0.104)",
+            "type": "python",
+            "request": "attach",
+            "pathMappings": [
+                {
+                    "localRoot": "${workspaceFolder}/balena-cam/app",
+                    "remoteRoot": "/usr/src/app"
+                }
+            ],
+            "port": 3000,
+            "host": "100.0.0.104"
+        }
+    ]
+}

@@ -23,11 +23,22 @@ function showFullscreenMessage() {
     }, 2000);
 }
 
-function attachStreamToVideoElement(pc, videoElem) {
-    console.log("Attaching stream...");
-    var srcStream = new MediaStream();
-    srcStream.addTrack(pc.getReceivers()[0].track);
-    videoElem.srcObject = srcStream;
+function attachStreamsToElements(pc, videoElem, audioElem) {
+    pc.getReceivers().forEach(function(recv) {
+        if (recv.track.kind == 'video') {
+            console.log("Attaching video stream...");
+            var videoSrcStream = new MediaStream();
+            videoSrcStream.addTrack(recv.track);
+            videoElem.srcObject = videoSrcStream;
+        } else if (recv.track.kind == 'audio') {
+            console.log("Attaching audio stream...");
+            var audioSrcStream = new MediaStream();
+            audioSrcStream.addTrack(recv.track);
+            audioElem.srcObject = audioSrcStream;
+        } else {
+            console.log('Found an unknown track in the stream, of type ' + recv.track.kind);
+        }
+    });
 }
 
 function peerConnectionGood(pc) {
@@ -87,9 +98,10 @@ function createNewPeerConnection() {
                         state = 1;
                     }
                     isVideoAttached = true;
-                    attachStreamToVideoElement(
+                    attachStreamsToElements(
                         pc,
-                        document.getElementById("video")
+                        document.getElementById('video'),
+                        document.getElementById('audio')
                     );
                     cleanup();
                     startVideoFreezeDetection(pc);
@@ -101,6 +113,7 @@ function createNewPeerConnection() {
         resolve();
     }).then(function() {
         pc.addTransceiver("video", { direction: "recvonly" });
+        pc.addTransceiver("audio", { direction: "recvonly" });
         return pc.createOffer();
     }).then(function(offer) {
         return pc.setLocalDescription(offer);
@@ -315,7 +328,7 @@ var safariOnIos = isSafari && iOS;
 if (window.navigator.userAgent.indexOf("Edge") > -1 || safariOnIos) {
     //state 3 means the client is a Microsoft Edge or Safari on iOS
     state = 3;
-    //startMJPEG();
+    startMJPEG();
 } else {
     var config = null;
     fetch("/ice-config")
@@ -330,6 +343,6 @@ if (window.navigator.userAgent.indexOf("Edge") > -1 || safariOnIos) {
             console.error("Error while getting the ICE server configuration");
             console.error(e);
             state = 3;
-            //startMJPEG();
+            startMJPEG();
         });
 }
